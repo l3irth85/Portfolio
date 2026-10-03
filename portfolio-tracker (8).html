@@ -1,0 +1,2834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Ledger — Portfolio Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  * { box-sizing: border-box; }
+  html, body { background: #0b0d11; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+  #root { display: flex; justify-content: center; padding: 32px 16px; min-height: 100vh; }
+  #boot-error { display: none; color: #c1604a; font-family: monospace; padding: 24px; max-width: 700px; white-space: pre-wrap; }
+
+  /* ---- minimal utility classes (replaces Tailwind CDN) ---- */
+  .flex { display: flex; }
+  .flex-col { flex-direction: column; }
+  .flex-wrap { flex-wrap: wrap; }
+  .items-center { align-items: center; }
+  .items-baseline { align-items: baseline; }
+  .items-end { align-items: flex-end; }
+  .items-start { align-items: flex-start; }
+  .justify-between { justify-content: space-between; }
+  .justify-end { justify-content: flex-end; }
+  .grid { display: grid; }
+  .grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .gap-1 { gap: 4px; }
+  .gap-2 { gap: 8px; }
+  .gap-3 { gap: 12px; }
+  .gap-8 { gap: 32px; }
+  .mb-1 { margin-bottom: 4px; }
+  .mb-2 { margin-bottom: 8px; }
+  .mb-4 { margin-bottom: 16px; }
+  .mb-6 { margin-bottom: 24px; }
+  button { font-family: inherit; cursor: pointer; border: none; background: none; }
+  input { font-family: inherit; }
+  @media (max-width: 640px) {
+    .grid-cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  /* ---- app theme ---- */
+  .pt-root {
+    --bg: #14181f; --panel: #1b212b; --panel-2: #232a35; --hairline: #2c333f;
+    --ink: #ece7da; --muted: #8b92a3; --brass: #c9a24b; --brass-dim: #8a7340;
+    --pos: #5ba37e; --neg: #c1604a;
+    background: var(--bg); color: var(--ink); font-family: 'Inter', sans-serif;
+    width: 100%; max-width: 880px; border-radius: 14px; overflow: hidden; position: relative;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+  .pt-mono { font-family: 'IBM Plex Mono', monospace; }
+  .pt-display { font-family: 'Fraunces', serif; }
+  .pt-row { transition: background 0.15s ease; }
+  .pt-row:hover { background: var(--panel-2); }
+  .pt-fade-in { animation: ptFadeIn 0.4s ease both; }
+  @keyframes ptFadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .pt-btn-brass { background: var(--brass); color: #1b1408; }
+  .pt-btn-brass:hover { background: #d6af56; }
+  .pt-input {
+    background: var(--panel-2); border: 1px solid var(--hairline); color: var(--ink);
+    border-radius: 6px; padding: 8px 10px; font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+    outline: none; width: 100%;
+  }
+  .pt-input:focus { border-color: var(--brass-dim); }
+  select.pt-input { appearance: none; -webkit-appearance: none; background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" stroke="%238b92a3" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>'); background-repeat: no-repeat; background-position: right 8px center; padding-right: 24px; }
+  select.pt-input option { background: var(--panel-2); color: var(--ink); }
+  .pt-label { font-family: 'Inter', sans-serif; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .pt-modal-backdrop { background: rgba(10,12,16,0.7); backdrop-filter: blur(2px); }
+  @keyframes ptSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .pt-fade-in { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="boot-error"></div>
+
+<script>
+  // Surface any startup error on the page itself instead of a silent blank screen.
+  window.addEventListener("error", function (e) {
+    var el = document.getElementById("boot-error");
+    if (!el) return;
+    el.style.display = "block";
+    el.textContent = "Something went wrong loading the app:\n\n" + (e.error ? e.error.stack || e.error.message : e.message) +
+      "\n\nIf this mentions 'React' or 'ReactDOM' is not defined, the CDN scripts may be blocked on this network — try a different network or browser.";
+  });
+</script>
+
+<script>
+/* ===================== Compiled app (no in-browser build step) ===================== */
+const {
+  useState,
+  useEffect,
+  useRef,
+  useMemo
+} = React;
+
+// ---------------------------------------------------------------------------
+// Storage shim: mirrors the Claude-artifact window.storage API using
+// localStorage, so this file works standalone in any browser.
+// ---------------------------------------------------------------------------
+if (!window.storage) {
+  const NS = "pt_";
+  window.storage = {
+    get: async key => {
+      const raw = localStorage.getItem(NS + key);
+      if (raw === null) throw new Error("not found");
+      return {
+        key,
+        value: raw,
+        shared: false
+      };
+    },
+    set: async (key, value) => {
+      localStorage.setItem(NS + key, value);
+      return {
+        key,
+        value,
+        shared: false
+      };
+    },
+    delete: async key => {
+      localStorage.removeItem(NS + key);
+      return {
+        key,
+        deleted: true,
+        shared: false
+      };
+    },
+    list: async prefix => {
+      const keys = Object.keys(localStorage).filter(k => k.startsWith(NS + (prefix || ""))).map(k => k.slice(NS.length));
+      return {
+        keys,
+        prefix,
+        shared: false
+      };
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Minimal inline icon set (stand-in for lucide-react)
+// ---------------------------------------------------------------------------
+const iconBase = {
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round"
+};
+const Icon = ({
+  size = 14,
+  children,
+  style
+}) => /*#__PURE__*/React.createElement("svg", {
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  ...iconBase,
+  style: style
+}, children);
+const Plus = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("line", {
+  x1: "12",
+  y1: "5",
+  x2: "12",
+  y2: "19"
+}), /*#__PURE__*/React.createElement("line", {
+  x1: "5",
+  y1: "12",
+  x2: "19",
+  y2: "12"
+}));
+const Trash2 = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("polyline", {
+  points: "3 6 5 6 21 6"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M10 11v6"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M14 11v6"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"
+}));
+const RefreshCw = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("polyline", {
+  points: "23 4 23 10 17 10"
+}), /*#__PURE__*/React.createElement("polyline", {
+  points: "1 20 1 14 7 14"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M3.51 9a9 9 0 0 1 14.85-3.36L23 10"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M20.49 15a9 9 0 0 1-14.85 3.36L1 14"
+}));
+const ArrowUpRight = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("line", {
+  x1: "7",
+  y1: "17",
+  x2: "17",
+  y2: "7"
+}), /*#__PURE__*/React.createElement("polyline", {
+  points: "7 7 17 7 17 17"
+}));
+const ArrowDownRight = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("line", {
+  x1: "7",
+  y1: "7",
+  x2: "17",
+  y2: "17"
+}), /*#__PURE__*/React.createElement("polyline", {
+  points: "17 7 17 17 7 17"
+}));
+const X = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("line", {
+  x1: "18",
+  y1: "6",
+  x2: "6",
+  y2: "18"
+}), /*#__PURE__*/React.createElement("line", {
+  x1: "6",
+  y1: "6",
+  x2: "18",
+  y2: "18"
+}));
+const ChevronLeft = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("polyline", {
+  points: "15 18 9 12 15 6"
+}));
+const Pencil = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("path", {
+  d: "M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"
+}));
+const Check = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("polyline", {
+  points: "20 6 9 17 4 12"
+}));
+const Download = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("path", {
+  d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+}), /*#__PURE__*/React.createElement("polyline", {
+  points: "7 10 12 15 17 10"
+}), /*#__PURE__*/React.createElement("line", {
+  x1: "12",
+  y1: "15",
+  x2: "12",
+  y2: "3"
+}));
+const Upload = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("path", {
+  d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+}), /*#__PURE__*/React.createElement("polyline", {
+  points: "17 8 12 3 7 8"
+}), /*#__PURE__*/React.createElement("line", {
+  x1: "12",
+  y1: "3",
+  x2: "12",
+  y2: "15"
+}));
+const Brain = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("path", {
+  d: "M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M17.599 6.5a3 3 0 0 0 .399-1.375"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M6.003 5.125A3 3 0 0 0 6.401 6.5"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M3.477 10.896a4 4 0 0 1 .585-.396"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M19.938 10.5a4 4 0 0 1 .585.396"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M6 18a4 4 0 0 1-1.967-.516"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M19.967 17.484A4 4 0 0 1 18 18"
+}));
+const ImageIcon = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("rect", {
+  width: "18",
+  height: "18",
+  x: "3",
+  y: "3",
+  rx: "2",
+  ry: "2"
+}), /*#__PURE__*/React.createElement("circle", {
+  cx: "9",
+  cy: "9",
+  r: "2"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"
+}));
+const LayoutGrid = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("rect", {
+  width: "7",
+  height: "7",
+  x: "3",
+  y: "3",
+  rx: "1"
+}), /*#__PURE__*/React.createElement("rect", {
+  width: "7",
+  height: "7",
+  x: "14",
+  y: "3",
+  rx: "1"
+}), /*#__PURE__*/React.createElement("rect", {
+  width: "7",
+  height: "7",
+  x: "14",
+  y: "14",
+  rx: "1"
+}), /*#__PURE__*/React.createElement("rect", {
+  width: "7",
+  height: "7",
+  x: "3",
+  y: "14",
+  rx: "1"
+}));
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const STORAGE_KEY = "portfolio-data";
+const DEFAULT_RATE = 1.35;
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const todayStr = () => new Date().toISOString().slice(0, 10);
+function fmt(value, currency) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  const sym = currency === "SGD" ? "S$" : "$";
+  const neg = value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  return `${neg}${sym}${abs.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+}
+function fmtQty(value, unit) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  const str = value.toLocaleString(undefined, {
+    maximumFractionDigits: 6
+  });
+  return unit && unit !== "unit" ? `${str} ${unit}` : str;
+}
+function fmtPct(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  const neg = value < 0 ? "" : "+";
+  return `${neg}${value.toFixed(2)}%`;
+}
+
+// ---------------------------------------------------------------------------
+// Unit system: lets quantities be entered/displayed in different compatible
+// units (e.g. grams vs troy ounces for gold) and converts automatically.
+// UNIT_FACTORS expresses each unit as "grams per 1 unit" for the weight
+// group; the count group is a single unit with no conversion.
+// ---------------------------------------------------------------------------
+const UNIT_GROUPS = {
+  count: {
+    label: "Count (shares, coins, tokens…)",
+    units: ["unit"]
+  },
+  weight: {
+    label: "Weight (metals, commodities…)",
+    units: ["mg", "g", "kg", "oz", "lb"]
+  }
+};
+const UNIT_FACTORS = {
+  unit: 1,
+  mg: 0.001,
+  g: 1,
+  kg: 1000,
+  oz: 31.1034768,
+  lb: 453.59237
+}; // troy oz, standard for precious metals
+const UNIT_LABELS = {
+  unit: "unit",
+  mg: "mg",
+  g: "g",
+  kg: "kg",
+  oz: "oz (troy)",
+  lb: "lb"
+};
+
+// Converts a quantity amount from one unit to another within the same group.
+function convertQty(qty, fromUnit, toUnit) {
+  if (fromUnit === toUnit) return qty;
+  return qty * (UNIT_FACTORS[fromUnit] / UNIT_FACTORS[toUnit]);
+}
+// Converts a price-per-unit from one unit to another (inverse of qty conversion).
+function convertPricePerUnit(price, fromUnit, toUnit) {
+  if (fromUnit === toUnit) return price;
+  return price * (UNIT_FACTORS[toUnit] / UNIT_FACTORS[fromUnit]);
+}
+function computeAssetStats(asset, txns) {
+  const sorted = [...txns].sort((a, b) => a.date.localeCompare(b.date));
+  const priceUnit = asset.priceUnit || "unit";
+  let qty = 0,
+    cost = 0,
+    realized = 0;
+  for (const tx of sorted) {
+    const txUnit = tx.qtyUnit || "unit";
+    const qtyInPriceUnit = convertQty(tx.qty, txUnit, priceUnit);
+    if (tx.type === "buy") {
+      cost += tx.price * tx.qty; // tx.price is always $ per tx.qtyUnit, so this is correct regardless of unit
+      qty += qtyInPriceUnit;
+    } else {
+      if (qty > 0) {
+        const avgCost = cost / qty; // $ per priceUnit
+        const sellQty = Math.min(qtyInPriceUnit, qty); // capped, in priceUnit
+        const costRemoved = avgCost * sellQty;
+        const sellQtyInTxUnit = convertQty(sellQty, priceUnit, txUnit);
+        realized += tx.price * sellQtyInTxUnit - costRemoved;
+        cost -= costRemoved;
+        qty -= sellQty;
+      } else {
+        realized += tx.price * tx.qty;
+      }
+    }
+  }
+  const currentValueUSD = qty * (asset.currentPrice || 0);
+  const unrealized = currentValueUSD - cost;
+  return {
+    qty,
+    priceUnit,
+    costBasisUSD: cost,
+    currentValueUSD,
+    realizedUSD: realized,
+    unrealizedUSD: unrealized,
+    totalGainUSD: realized + unrealized
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Simple SVG area chart (stand-in for recharts, zero extra dependencies)
+// ---------------------------------------------------------------------------
+function PortfolioChart({
+  data
+}) {
+  const w = 760,
+    h = 140,
+    padL = 56,
+    padR = 12,
+    padT = 10,
+    padB = 22;
+  if (data.length < 2) return null;
+  const vals = data.map(d => d.valueUSD);
+  const min = Math.min(...vals),
+    max = Math.max(...vals);
+  const range = max - min || max || 1;
+  const stepX = (w - padL - padR) / (data.length - 1);
+  const points = data.map((d, i) => {
+    const x = padL + i * stepX;
+    const y = padT + (h - padT - padB) * (1 - (d.valueUSD - min) / range);
+    return [x, y];
+  });
+  const linePath = points.map((p, i) => i === 0 ? `M${p[0]},${p[1]}` : `L${p[0]},${p[1]}`).join(" ");
+  const areaPath = `${linePath} L${points[points.length - 1][0]},${h - padB} L${points[0][0]},${h - padB} Z`;
+  const labelIdxs = [0, Math.floor((data.length - 1) / 2), data.length - 1];
+  return /*#__PURE__*/React.createElement("svg", {
+    viewBox: `0 0 ${w} ${h}`,
+    width: "100%",
+    height: h,
+    style: {
+      overflow: "visible"
+    }
+  }, /*#__PURE__*/React.createElement("defs", null, /*#__PURE__*/React.createElement("linearGradient", {
+    id: "ptGrad",
+    x1: "0",
+    y1: "0",
+    x2: "0",
+    y2: "1"
+  }, /*#__PURE__*/React.createElement("stop", {
+    offset: "0%",
+    stopColor: "#c9a24b",
+    stopOpacity: "0.35"
+  }), /*#__PURE__*/React.createElement("stop", {
+    offset: "100%",
+    stopColor: "#c9a24b",
+    stopOpacity: "0"
+  }))), [0, 0.5, 1].map(t => /*#__PURE__*/React.createElement("line", {
+    key: t,
+    x1: padL,
+    x2: w - padR,
+    y1: padT + t * (h - padT - padB),
+    y2: padT + t * (h - padT - padB),
+    stroke: "#2c333f",
+    strokeDasharray: "3 3"
+  })), /*#__PURE__*/React.createElement("text", {
+    x: 4,
+    y: padT + 4,
+    fill: "#8b92a3",
+    fontSize: "10",
+    fontFamily: "IBM Plex Mono"
+  }, "$", Math.round(max).toLocaleString()), /*#__PURE__*/React.createElement("text", {
+    x: 4,
+    y: h - padB + 4,
+    fill: "#8b92a3",
+    fontSize: "10",
+    fontFamily: "IBM Plex Mono"
+  }, "$", Math.round(min).toLocaleString()), /*#__PURE__*/React.createElement("path", {
+    d: areaPath,
+    fill: "url(#ptGrad)"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: linePath,
+    fill: "none",
+    stroke: "#c9a24b",
+    strokeWidth: "2"
+  }), points.map((p, i) => /*#__PURE__*/React.createElement("circle", {
+    key: i,
+    cx: p[0],
+    cy: p[1],
+    r: "2.5",
+    fill: "#c9a24b"
+  }, /*#__PURE__*/React.createElement("title", null, `${data[i].date} · ${fmt(data[i].valueUSD, "USD")}`))), labelIdxs.map(i => /*#__PURE__*/React.createElement("text", {
+    key: i,
+    x: points[i][0],
+    y: h - 4,
+    fill: "#8b92a3",
+    fontSize: "10",
+    fontFamily: "IBM Plex Mono",
+    textAnchor: "middle"
+  }, data[i].date.slice(5))));
+}
+
+// ---------------------------------------------------------------------------
+// Main app
+// ---------------------------------------------------------------------------
+function PortfolioTracker() {
+  const [loaded, setLoaded] = useState(false);
+  const [assets, setAssets] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [rate, setRate] = useState(DEFAULT_RATE);
+  const [rateUpdatedAt, setRateUpdatedAt] = useState(null);
+  const [rateSource, setRateSource] = useState("default");
+  const [history, setHistory] = useState([]);
+  const [view, setView] = useState("overview");
+  const [selectedAssetId, setSelectedAssetId] = useState(null);
+  const [showAddAsset, setShowAddAsset] = useState(false);
+  const [showAddTxn, setShowAddTxn] = useState(false);
+  const [editingTxn, setEditingTxn] = useState(null);
+  const [editingAsset, setEditingAsset] = useState(null);
+  const [editingPriceId, setEditingPriceId] = useState(null);
+  const [priceDraft, setPriceDraft] = useState("");
+  const [rateDraft, setRateDraft] = useState("");
+  const [editingRate, setEditingRate] = useState(false);
+  const [rateLoading, setRateLoading] = useState(false);
+  const [priceLoading, setPriceLoading] = useState({});
+  const [priceFetchError, setPriceFetchError] = useState({});
+  const [avKey, setAvKey] = useState(""); // GoldAPI.io API key
+  const [saveError, setSaveError] = useState(false);
+  const skipSave = useRef(true);
+
+  // Load AV key from its own localStorage slot
+  useEffect(() => {
+    const k = localStorage.getItem("pt_goldkey") || "";
+    setAvKey(k);
+  }, []);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get(STORAGE_KEY, false);
+        if (res && res.value) {
+          const data = JSON.parse(res.value);
+          setAssets(data.assets || []);
+          setTransactions(data.transactions || []);
+          setRate(data.rate || DEFAULT_RATE);
+          setRateUpdatedAt(data.rateUpdatedAt || null);
+          setRateSource(data.rateSource || "default");
+          setHistory(data.history || []);
+        }
+      } catch (e) {
+        // no existing data yet
+      } finally {
+        setLoaded(true);
+      }
+    })();
+    fetchRate();
+  }, []);
+  useEffect(() => {
+    if (!loaded) return;
+    if (skipSave.current) {
+      skipSave.current = false;
+      return;
+    }
+    (async () => {
+      try {
+        const payload = {
+          assets,
+          transactions,
+          rate,
+          rateUpdatedAt,
+          rateSource,
+          history
+        };
+        const result = await window.storage.set(STORAGE_KEY, JSON.stringify(payload), false);
+        setSaveError(!result);
+      } catch (e) {
+        setSaveError(true);
+      }
+    })();
+  }, [assets, transactions, rate, rateUpdatedAt, rateSource, history, loaded]);
+
+  // ---------------------------------------------------------------------------
+  // Price fetching — CoinGecko for crypto, GoldAPI.io for precious metals
+  // ---------------------------------------------------------------------------
+  async function fetchAssetPrice(asset, key) {
+    if (!asset.priceTicker || !asset.priceSource) return null;
+    const ticker = asset.priceTicker.trim();
+    const source = asset.priceSource;
+    if (source === "coingecko") {
+      try {
+        const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(ticker)}&vs_currencies=usd`);
+        if (res.ok) {
+          const data = await res.json();
+          const price = data?.[ticker.toLowerCase()]?.usd;
+          if (price > 0) return price;
+        }
+      } catch (e) {}
+      return null;
+    }
+    if (source === "goldapi") {
+      const apiKey = key || avKey;
+      if (!apiKey) return null;
+      // ticker should be the metal symbol: XAU, XAG, XPT, XPD
+      const metal = ticker.toUpperCase();
+      try {
+        const res = await fetch(`https://www.goldapi.io/api/${metal}/USD`, {
+          headers: {
+            "x-access-token": apiKey,
+            "Content-Type": "application/json"
+          }
+        });
+        if (res.status === 401) return "BAD_KEY";
+        if (res.status === 429) return "RATE_LIMIT";
+        if (!res.ok) return null;
+        const data = await res.json();
+        // Return price per troy oz (priceUnit on the asset determines display)
+        const price = parseFloat(data?.price);
+        if (price > 0) return price;
+      } catch (e) {}
+      return null;
+    }
+    return null;
+  }
+  async function refreshPrice(assetObj, key) {
+    if (!assetObj.priceTicker || !assetObj.priceSource) return;
+    setPriceLoading(s => ({
+      ...s,
+      [assetObj.id]: true
+    }));
+    setPriceFetchError(s => ({
+      ...s,
+      [assetObj.id]: null
+    }));
+    const result = await fetchAssetPrice(assetObj, key);
+    if (result === "BAD_KEY") {
+      setPriceFetchError(s => ({
+        ...s,
+        [assetObj.id]: "Invalid API key — check your GoldAPI.io key in Settings."
+      }));
+    } else if (result === "RATE_LIMIT") {
+      setPriceFetchError(s => ({
+        ...s,
+        [assetObj.id]: "Rate limit hit — try again in a minute."
+      }));
+    } else if (result !== null) {
+      updatePrice(assetObj.id, result);
+    } else {
+      setPriceFetchError(s => ({
+        ...s,
+        [assetObj.id]: "Couldn't fetch — check the ticker ID or API key."
+      }));
+    }
+    setPriceLoading(s => ({
+      ...s,
+      [assetObj.id]: false
+    }));
+  }
+  async function refreshAllPrices(assetList, key) {
+    const tracked = (assetList || assets).filter(a => a.priceTicker && a.priceSource);
+    await Promise.all(tracked.map(a => refreshPrice(a, key)));
+  }
+
+  // Hourly auto-refresh
+  useEffect(() => {
+    if (!loaded || assets.length === 0) return;
+    const id = setInterval(() => refreshAllPrices(assets, avKey), 60 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [loaded, assets.map(a => a.priceTicker).join(","), avKey]);
+
+  // Initial fetch on first load
+  const didInitialFetch = useRef(false);
+  useEffect(() => {
+    if (!loaded || assets.length === 0 || didInitialFetch.current) return;
+    didInitialFetch.current = true;
+    refreshAllPrices(assets, avKey);
+  }, [loaded, assets.length]);
+  async function fetchRate() {
+    setRateLoading(true);
+    try {
+      const res = await fetch("https://api.frankfurter.app/latest?from=USD&to=SGD");
+      const data = await res.json();
+      if (data && data.rates && data.rates.SGD) {
+        setRate(data.rates.SGD);
+        setRateUpdatedAt(new Date().toISOString());
+        setRateSource("live");
+      }
+    } catch (e) {
+      setRateSource(s => s === "live" ? s : "default");
+    } finally {
+      setRateLoading(false);
+    }
+  }
+  const statsByAsset = useMemo(() => {
+    const map = {};
+    for (const a of assets) map[a.id] = computeAssetStats(a, transactions.filter(t => t.assetId === a.id));
+    return map;
+  }, [assets, transactions]);
+  const portfolioTotals = useMemo(() => {
+    let currentUSD = 0,
+      costUSD = 0,
+      gainUSD = 0;
+    for (const a of assets) {
+      const s = statsByAsset[a.id];
+      if (!s) continue;
+      currentUSD += s.currentValueUSD;
+      costUSD += s.costBasisUSD;
+      gainUSD += s.totalGainUSD;
+    }
+    return {
+      currentUSD,
+      costUSD,
+      gainUSD
+    };
+  }, [assets, statsByAsset]);
+  useEffect(() => {
+    if (!loaded || assets.length === 0) return;
+    const today = todayStr();
+    setHistory(h => {
+      const last = h[h.length - 1];
+      if (last && last.date === today) {
+        if (Math.abs(last.valueUSD - portfolioTotals.currentUSD) < 0.005) return h;
+        return [...h.slice(0, -1), {
+          date: today,
+          valueUSD: portfolioTotals.currentUSD
+        }];
+      }
+      return [...h, {
+        date: today,
+        valueUSD: portfolioTotals.currentUSD
+      }];
+    });
+  }, [loaded, portfolioTotals.currentUSD, assets.length]);
+  function addAsset({
+    symbol,
+    name,
+    price,
+    unitGroup,
+    priceUnit,
+    priceTicker,
+    priceSource
+  }) {
+    setAssets(arr => [...arr, {
+      id: uid(),
+      symbol: symbol.toUpperCase().trim(),
+      name: name.trim(),
+      currentPrice: price,
+      unitGroup,
+      priceUnit,
+      priceTicker: priceTicker || "",
+      priceSource: priceSource || "manual",
+      updatedAt: new Date().toISOString()
+    }]);
+  }
+  function deleteAsset(id) {
+    setAssets(arr => arr.filter(a => a.id !== id));
+    setTransactions(arr => arr.filter(t => t.assetId !== id));
+    if (selectedAssetId === id) {
+      setView("overview");
+      setSelectedAssetId(null);
+    }
+  }
+  function updateAsset(id, patch) {
+    setAssets(arr => arr.map(a => a.id === id ? {
+      ...a,
+      ...patch,
+      updatedAt: new Date().toISOString()
+    } : a));
+  }
+  function updatePrice(id, price) {
+    setAssets(arr => arr.map(a => a.id === id ? {
+      ...a,
+      currentPrice: price,
+      updatedAt: new Date().toISOString()
+    } : a));
+  }
+  function addTransaction(tx) {
+    setTransactions(arr => [...arr, {
+      id: uid(),
+      ...tx
+    }]);
+  }
+  function deleteTransaction(id) {
+    setTransactions(arr => arr.filter(t => t.id !== id));
+  }
+  function updateTransaction(id, patch) {
+    setTransactions(arr => arr.map(t => t.id === id ? {
+      ...t,
+      ...patch
+    } : t));
+  }
+  function exportData() {
+    const payload = {
+      assets,
+      transactions,
+      rate,
+      rateUpdatedAt,
+      rateSource,
+      history,
+      exportedAt: new Date().toISOString()
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ledger-export-${todayStr()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  const importInputRef = useRef(null);
+  function triggerImport() {
+    importInputRef.current && importInputRef.current.click();
+  }
+  function handleImportFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data || !Array.isArray(data.assets) || !Array.isArray(data.transactions)) {
+          alert("This file doesn't look like a valid Ledger export.");
+          return;
+        }
+        const proceed = window.confirm("Importing will replace all current assets and transactions in this browser. Continue?");
+        if (!proceed) return;
+        setAssets(data.assets || []);
+        setTransactions(data.transactions || []);
+        setRate(data.rate || DEFAULT_RATE);
+        setRateUpdatedAt(data.rateUpdatedAt || null);
+        setRateSource(data.rateSource || "manual");
+        setHistory(data.history || []);
+      } catch (err) {
+        alert("Couldn't read that file — make sure it's a JSON export from this app.");
+      } finally {
+        e.target.value = "";
+      }
+    };
+    reader.readAsText(file);
+  }
+  const selectedAsset = assets.find(a => a.id === selectedAssetId) || null;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pt-root"
+  }, /*#__PURE__*/React.createElement("input", {
+    ref: importInputRef,
+    type: "file",
+    accept: "application/json",
+    style: {
+      display: "none"
+    },
+    onChange: handleImportFile
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: "28px 28px 36px"
+    }
+  }, view === "overview" && /*#__PURE__*/React.createElement(OverviewView, {
+    assets: assets,
+    statsByAsset: statsByAsset,
+    portfolioTotals: portfolioTotals,
+    rate: rate,
+    rateUpdatedAt: rateUpdatedAt,
+    rateSource: rateSource,
+    rateLoading: rateLoading,
+    history: history,
+    onRefreshRate: fetchRate,
+    onOpenAsset: id => {
+      setSelectedAssetId(id);
+      setView("asset");
+    },
+    onAddAsset: () => setShowAddAsset(true),
+    onDeleteAsset: deleteAsset,
+    onEditAsset: a => setEditingAsset(a),
+    onGoAnalysis: () => setView("analysis"),
+    editingPriceId: editingPriceId,
+    setEditingPriceId: setEditingPriceId,
+    priceDraft: priceDraft,
+    setPriceDraft: setPriceDraft,
+    onSavePrice: updatePrice,
+    editingRate: editingRate,
+    setEditingRate: setEditingRate,
+    rateDraft: rateDraft,
+    setRateDraft: setRateDraft,
+    setRate: v => {
+      setRate(v);
+      setRateUpdatedAt(new Date().toISOString());
+      setRateSource("manual");
+    },
+    saveError: saveError,
+    onExport: exportData,
+    onImport: triggerImport,
+    avKey: avKey,
+    setAvKey: k => {
+      setAvKey(k);
+      localStorage.setItem("pt_goldkey", k);
+    },
+    priceLoading: priceLoading,
+    priceFetchError: priceFetchError,
+    onRefreshPrice: a => refreshPrice(a, avKey),
+    onRefreshAllPrices: () => refreshAllPrices(assets, avKey)
+  }), view === "asset" && selectedAsset && /*#__PURE__*/React.createElement(AssetView, {
+    asset: selectedAsset,
+    stats: statsByAsset[selectedAsset.id],
+    transactions: transactions.filter(t => t.assetId === selectedAsset.id),
+    rate: rate,
+    onBack: () => {
+      setView("overview");
+      setSelectedAssetId(null);
+    },
+    onAddTxn: () => setShowAddTxn(true),
+    onDeleteTxn: deleteTransaction,
+    onEditTxn: tx => setEditingTxn(tx),
+    editingPriceId: editingPriceId,
+    setEditingPriceId: setEditingPriceId,
+    priceDraft: priceDraft,
+    setPriceDraft: setPriceDraft,
+    onSavePrice: updatePrice
+  }), view === "analysis" && /*#__PURE__*/React.createElement(AnalysisView, {
+    assets: assets,
+    transactions: transactions,
+    statsByAsset: statsByAsset,
+    rate: rate,
+    onBack: () => setView("overview")
+  })), showAddAsset && /*#__PURE__*/React.createElement(AddAssetModal, {
+    onClose: () => setShowAddAsset(false),
+    onSubmit: data => {
+      addAsset(data);
+      setShowAddAsset(false);
+    }
+  }), editingAsset && /*#__PURE__*/React.createElement(EditAssetModal, {
+    asset: editingAsset,
+    onClose: () => setEditingAsset(null),
+    onSubmit: patch => {
+      updateAsset(editingAsset.id, patch);
+      setEditingAsset(null);
+    }
+  }), showAddTxn && selectedAsset && /*#__PURE__*/React.createElement(AddTransactionModal, {
+    asset: selectedAsset,
+    onClose: () => setShowAddTxn(false),
+    onSubmit: data => {
+      addTransaction({
+        assetId: selectedAsset.id,
+        ...data
+      });
+      setShowAddTxn(false);
+    }
+  }), editingTxn && selectedAsset && /*#__PURE__*/React.createElement(AddTransactionModal, {
+    asset: selectedAsset,
+    initial: editingTxn,
+    onClose: () => setEditingTxn(null),
+    onSubmit: data => {
+      updateTransaction(editingTxn.id, data);
+      setEditingTxn(null);
+    }
+  }));
+}
+function OverviewView(props) {
+  const {
+    assets,
+    statsByAsset,
+    portfolioTotals,
+    rate,
+    rateUpdatedAt,
+    rateSource,
+    rateLoading,
+    history,
+    onRefreshRate,
+    onOpenAsset,
+    onAddAsset,
+    onDeleteAsset,
+    onEditAsset,
+    onGoAnalysis,
+    editingPriceId,
+    setEditingPriceId,
+    priceDraft,
+    setPriceDraft,
+    onSavePrice,
+    editingRate,
+    setEditingRate,
+    rateDraft,
+    setRateDraft,
+    setRate,
+    saveError,
+    onExport,
+    onImport,
+    avKey,
+    setAvKey,
+    priceLoading,
+    priceFetchError,
+    onRefreshPrice,
+    onRefreshAllPrices
+  } = props;
+  const [showSettings, setShowSettings] = useState(false);
+  const [avDraft, setAvDraft] = useState(avKey);
+  const pct = portfolioTotals.costUSD > 0 ? portfolioTotals.gainUSD / portfolioTotals.costUSD * 100 : 0;
+  const gainPositive = portfolioTotals.gainUSD >= 0;
+  const anyLoading = Object.values(priceLoading).some(Boolean);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pt-fade-in"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-baseline justify-between mb-1"
+  }, /*#__PURE__*/React.createElement("h1", {
+    className: "pt-display",
+    style: {
+      fontSize: 26,
+      fontWeight: 600,
+      color: "var(--ink)"
+    }
+  }, "The Ledger"), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-3"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: onImport,
+    className: "pt-mono flex items-center gap-1",
+    style: {
+      fontSize: 11,
+      color: "var(--muted)"
+    },
+    title: "Import a previously exported JSON file"
+  }, /*#__PURE__*/React.createElement(Upload, {
+    size: 12
+  }), " Import"), /*#__PURE__*/React.createElement("button", {
+    onClick: onExport,
+    className: "pt-mono flex items-center gap-1",
+    style: {
+      fontSize: 11,
+      color: "var(--muted)"
+    },
+    title: "Download all data as a JSON file"
+  }, /*#__PURE__*/React.createElement(Download, {
+    size: 12
+  }), " Export"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setShowSettings(s => !s);
+      setAvDraft(avKey);
+    },
+    className: "pt-mono",
+    style: {
+      fontSize: 11,
+      color: showSettings ? "var(--brass)" : "var(--muted)"
+    },
+    title: "Settings"
+  }, "⚙ Settings"), /*#__PURE__*/React.createElement("button", {
+    onClick: onGoAnalysis,
+    className: "pt-mono flex items-center gap-1",
+    style: {
+      fontSize: 11,
+      padding: "4px 10px",
+      borderRadius: 6,
+      background: "rgba(201,162,75,0.12)",
+      color: "var(--brass)",
+      border: "1px solid var(--brass-dim)",
+      fontWeight: 600
+    },
+    title: "AI analysis of your trades"
+  }, "✦ Analyse"), /*#__PURE__*/React.createElement("div", {
+    className: "pt-label"
+  }, "portfolio overview"))), showSettings && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--panel)",
+      border: "1px solid var(--hairline)",
+      borderRadius: 10,
+      padding: "16px 18px",
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 10
+    }
+  }, "Price feed settings"), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-3 items-end flex-wrap"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: "1 1 280px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "GoldAPI.io API key", /*#__PURE__*/React.createElement("a", {
+    href: "https://www.goldapi.io/",
+    target: "_blank",
+    rel: "noreferrer",
+    style: {
+      marginLeft: 8,
+      color: "var(--brass)",
+      textTransform: "none",
+      letterSpacing: 0,
+      fontSize: 10
+    }
+  }, "Get free key ↗")), /*#__PURE__*/React.createElement("input", {
+    className: "pt-input",
+    type: "password",
+    placeholder: "Paste your key here…",
+    value: avDraft,
+    onChange: e => setAvDraft(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter") {
+        setAvKey(avDraft);
+        setShowSettings(false);
+      }
+    }
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "pt-btn-brass",
+    style: {
+      borderRadius: 7,
+      padding: "8px 16px",
+      fontSize: 12,
+      fontWeight: 600,
+      whiteSpace: "nowrap"
+    },
+    onClick: () => {
+      setAvKey(avDraft);
+      setShowSettings(false);
+    }
+  }, "Save key"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => onRefreshAllPrices(),
+    disabled: anyLoading,
+    className: "pt-mono flex items-center gap-1",
+    style: {
+      fontSize: 12,
+      color: "var(--brass)",
+      opacity: anyLoading ? 0.5 : 1
+    }
+  }, /*#__PURE__*/React.createElement(RefreshCw, {
+    size: 13,
+    style: anyLoading ? {
+      animation: "ptSpin 0.9s linear infinite"
+    } : {}
+  }), " Refresh all prices")), /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 11,
+      color: "var(--muted)",
+      marginTop: 10,
+      lineHeight: 1.6
+    }
+  }, "Free — no card needed. Get your key at goldapi.io. CoinGecko covers crypto with no key.")), /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      color: "var(--muted)",
+      fontSize: 12,
+      marginBottom: 22
+    }
+  }, assets.length, " asset", assets.length === 1 ? "" : "s", " tracked"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--panel)",
+      border: "1px solid var(--hairline)",
+      borderRadius: 12,
+      padding: "22px 24px",
+      marginBottom: 18
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-wrap items-end gap-8"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 6
+    }
+  }, "total value"), /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 32,
+      fontWeight: 600,
+      color: "var(--ink)",
+      lineHeight: 1
+    }
+  }, fmt(portfolioTotals.currentUSD, "USD")), /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 13,
+      color: "var(--muted)",
+      marginTop: 4
+    }
+  }, fmt(portfolioTotals.currentUSD * rate, "SGD"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 6
+    }
+  }, "gain / loss"), /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono flex items-center gap-1",
+    style: {
+      fontSize: 20,
+      fontWeight: 600,
+      color: gainPositive ? "var(--pos)" : "var(--neg)"
+    }
+  }, gainPositive ? /*#__PURE__*/React.createElement(ArrowUpRight, {
+    size: 18
+  }) : /*#__PURE__*/React.createElement(ArrowDownRight, {
+    size: 18
+  }), fmt(Math.abs(portfolioTotals.gainUSD), "USD"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13,
+      marginLeft: 6,
+      opacity: 0.85
+    }
+  }, fmtPct(pct))), /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 13,
+      color: "var(--muted)",
+      marginTop: 4
+    }
+  }, fmt(Math.abs(portfolioTotals.gainUSD) * rate, "SGD"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginLeft: "auto"
+    }
+  }, /*#__PURE__*/React.createElement(ExchangeRateControl, {
+    rate: rate,
+    rateUpdatedAt: rateUpdatedAt,
+    rateSource: rateSource,
+    rateLoading: rateLoading,
+    onRefresh: onRefreshRate,
+    editing: editingRate,
+    setEditing: setEditingRate,
+    draft: rateDraft,
+    setDraft: setRateDraft,
+    setRate: setRate
+  }))), history.length > 1 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 18
+    }
+  }, /*#__PURE__*/React.createElement(PortfolioChart, {
+    data: history
+  })) : /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      marginTop: 16,
+      fontSize: 12,
+      color: "var(--muted)"
+    }
+  }, "Value history builds up as you use the app — one point is recorded per day.")), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between mb-2",
+    style: {
+      marginTop: 26
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label"
+  }, "assets"), /*#__PURE__*/React.createElement("button", {
+    onClick: onAddAsset,
+    className: "pt-btn-brass flex items-center gap-1",
+    style: {
+      borderRadius: 6,
+      padding: "6px 12px",
+      fontSize: 12,
+      fontFamily: "Inter"
+    }
+  }, /*#__PURE__*/React.createElement(Plus, {
+    size: 14
+  }), " Add asset")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: "1px solid var(--hairline)",
+      borderRadius: 10,
+      overflow: "hidden"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      display: "grid",
+      gridTemplateColumns: "1.3fr 0.85fr 0.85fr 0.95fr 0.85fr 1fr 22px 46px",
+      gap: 6,
+      padding: "10px 16px",
+      fontSize: 10.5,
+      color: "var(--muted)",
+      textTransform: "uppercase",
+      letterSpacing: "0.05em",
+      borderBottom: "1px solid var(--hairline)"
+    }
+  }, /*#__PURE__*/React.createElement("div", null, "Asset"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "Avg buy"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "Invested"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "Current value"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "Change"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "Price"), /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null)), assets.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      padding: "28px 16px",
+      color: "var(--muted)",
+      fontSize: 13,
+      textAlign: "center"
+    }
+  }, "No assets yet. Add one to start the ledger."), assets.map(a => {
+    const s = statsByAsset[a.id];
+    const assetPct = s.costBasisUSD > 0 ? s.totalGainUSD / s.costBasisUSD * 100 : 0;
+    const pos = s.totalGainUSD >= 0;
+    const editing = editingPriceId === a.id;
+    const avgBuy = s.qty > 0 ? s.costBasisUSD / s.qty : null;
+    const priceUnit = a.priceUnit && a.priceUnit !== "unit" ? ` /${UNIT_LABELS[a.priceUnit]}` : "";
+    const isLoading = priceLoading[a.id];
+    const fetchErr = priceFetchError[a.id];
+    const hasAutoPrice = a.priceSource && a.priceSource !== "manual" && a.priceTicker;
+    const lastUpdated = a.updatedAt ? new Date(a.updatedAt) : null;
+    const minutesAgo = lastUpdated ? Math.floor((Date.now() - lastUpdated) / 60000) : null;
+    const freshLabel = minutesAgo !== null ? minutesAgo < 2 ? "just now" : minutesAgo < 60 ? `${minutesAgo}m ago` : `${Math.floor(minutesAgo / 60)}h ago` : null;
+    return /*#__PURE__*/React.createElement(React.Fragment, {
+      key: a.id
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "pt-row",
+      style: {
+        display: "grid",
+        gridTemplateColumns: "1.3fr 0.85fr 0.85fr 0.95fr 0.85fr 1fr 22px 46px",
+        gap: 6,
+        padding: "12px 16px",
+        alignItems: "center",
+        borderBottom: fetchErr ? "none" : "1px solid var(--hairline)",
+        cursor: "pointer"
+      },
+      onClick: e => {
+        if (e.target.closest("button") || e.target.closest("input")) return;
+        onOpenAsset(a.id);
+      }
+    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      className: "flex items-center gap-2",
+      style: {
+        fontWeight: 600,
+        fontSize: 13.5
+      }
+    }, a.symbol, hasAutoPrice && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 9,
+        padding: "1px 5px",
+        borderRadius: 4,
+        background: "rgba(91,163,126,0.15)",
+        color: "var(--pos)",
+        fontFamily: "IBM Plex Mono",
+        letterSpacing: 0.02
+      }
+    }, a.priceSource === "coingecko" ? "CG" : "Au")), /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        fontSize: 10.5,
+        color: "var(--muted)"
+      }
+    }, a.name, freshLabel && hasAutoPrice && /*#__PURE__*/React.createElement("span", {
+      style: {
+        marginLeft: 6,
+        opacity: 0.55
+      }
+    }, "· ", freshLabel))), /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        textAlign: "right",
+        fontSize: 13
+      }
+    }, avgBuy !== null ? /*#__PURE__*/React.createElement(React.Fragment, null, fmt(avgBuy, "USD"), priceUnit && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: "var(--muted)"
+      }
+    }, priceUnit)) : /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, "—")), /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        textAlign: "right",
+        fontSize: 13
+      }
+    }, fmt(s.costBasisUSD, "USD")), /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        textAlign: "right",
+        fontSize: 13
+      }
+    }, fmt(s.currentValueUSD, "USD")), /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        textAlign: "right",
+        fontSize: 13,
+        color: pos ? "var(--pos)" : "var(--neg)"
+      }
+    }, fmtPct(assetPct)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right"
+      },
+      onClick: e => e.stopPropagation()
+    }, editing ? /*#__PURE__*/React.createElement("div", {
+      className: "flex items-center gap-1 justify-end"
+    }, /*#__PURE__*/React.createElement("input", {
+      autoFocus: true,
+      className: "pt-input",
+      style: {
+        width: 70,
+        padding: "4px 6px"
+      },
+      value: priceDraft,
+      onChange: e => setPriceDraft(e.target.value),
+      onKeyDown: e => {
+        if (e.key === "Enter") {
+          const v = parseFloat(priceDraft);
+          if (!isNaN(v) && v >= 0) onSavePrice(a.id, v);
+          setEditingPriceId(null);
+        }
+        if (e.key === "Escape") setEditingPriceId(null);
+      }
+    }), /*#__PURE__*/React.createElement("button", {
+      onClick: () => {
+        const v = parseFloat(priceDraft);
+        if (!isNaN(v) && v >= 0) onSavePrice(a.id, v);
+        setEditingPriceId(null);
+      },
+      style: {
+        color: "var(--brass)"
+      }
+    }, /*#__PURE__*/React.createElement(Check, {
+      size: 14
+    }))) : /*#__PURE__*/React.createElement("button", {
+      className: "pt-mono flex items-center gap-1 justify-end",
+      style: {
+        fontSize: 13,
+        color: "var(--ink)",
+        marginLeft: "auto"
+      },
+      onClick: () => {
+        setEditingPriceId(a.id);
+        setPriceDraft(String(a.currentPrice));
+      }
+    }, fmt(a.currentPrice, "USD"), " ", !hasAutoPrice && /*#__PURE__*/React.createElement(Pencil, {
+      size: 11,
+      style: {
+        color: "var(--muted)"
+      }
+    }))), /*#__PURE__*/React.createElement("div", {
+      onClick: e => e.stopPropagation()
+    }, hasAutoPrice && /*#__PURE__*/React.createElement("button", {
+      onClick: () => onRefreshPrice(a),
+      disabled: isLoading,
+      title: "Refresh price",
+      style: {
+        color: isLoading ? "var(--muted)" : "var(--brass)"
+      }
+    }, /*#__PURE__*/React.createElement(RefreshCw, {
+      size: 13,
+      style: isLoading ? {
+        animation: "ptSpin 0.9s linear infinite"
+      } : {}
+    }))), /*#__PURE__*/React.createElement("div", {
+      className: "flex gap-1",
+      style: {
+        justifyContent: "flex-end"
+      },
+      onClick: e => e.stopPropagation()
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => onEditAsset(a),
+      style: {
+        color: "var(--muted)"
+      },
+      title: "Edit asset"
+    }, /*#__PURE__*/React.createElement(Pencil, {
+      size: 13
+    })), /*#__PURE__*/React.createElement("button", {
+      onClick: () => onDeleteAsset(a.id),
+      style: {
+        color: "var(--muted)"
+      },
+      title: "Remove asset"
+    }, /*#__PURE__*/React.createElement(Trash2, {
+      size: 13
+    })))), fetchErr && /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        padding: "3px 16px 9px",
+        fontSize: 11,
+        color: "var(--neg)",
+        borderBottom: "1px solid var(--hairline)"
+      }
+    }, "⚠ ", fetchErr));
+  })), saveError && /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      marginTop: 14,
+      fontSize: 11,
+      color: "var(--neg)"
+    }
+  }, "Couldn't save changes — they may not persist after this session."));
+}
+function ExchangeRateControl({
+  rate,
+  rateUpdatedAt,
+  rateSource,
+  rateLoading,
+  onRefresh,
+  editing,
+  setEditing,
+  draft,
+  setDraft,
+  setRate
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 6
+    }
+  }, "usd / sgd rate"), editing ? /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-1 justify-end"
+  }, /*#__PURE__*/React.createElement("input", {
+    autoFocus: true,
+    className: "pt-input",
+    style: {
+      width: 80,
+      padding: "4px 6px"
+    },
+    value: draft,
+    onChange: e => setDraft(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter") {
+        const v = parseFloat(draft);
+        if (!isNaN(v) && v > 0) setRate(v);
+        setEditing(false);
+      }
+      if (e.key === "Escape") setEditing(false);
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      const v = parseFloat(draft);
+      if (!isNaN(v) && v > 0) setRate(v);
+      setEditing(false);
+    },
+    style: {
+      color: "var(--brass)"
+    }
+  }, /*#__PURE__*/React.createElement(Check, {
+    size: 14
+  }))) : /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2 justify-end"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "pt-mono",
+    style: {
+      fontSize: 15,
+      color: "var(--ink)"
+    },
+    onClick: () => {
+      setEditing(true);
+      setDraft(String(rate));
+    }
+  }, "1 = ", rate.toFixed(4)), /*#__PURE__*/React.createElement("button", {
+    onClick: onRefresh,
+    title: "Refresh live rate",
+    style: {
+      color: rateLoading ? "var(--muted)" : "var(--brass)"
+    }
+  }, /*#__PURE__*/React.createElement(RefreshCw, {
+    size: 13,
+    style: rateLoading ? {
+      animation: "ptSpin 0.9s linear infinite"
+    } : {}
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 10.5,
+      color: "var(--muted)",
+      marginTop: 3
+    }
+  }, rateSource === "live" ? "live · frankfurter.app" : rateSource === "manual" ? "manual" : "default estimate"));
+}
+function AssetView(props) {
+  const {
+    asset,
+    stats,
+    transactions,
+    rate,
+    onBack,
+    onAddTxn,
+    onDeleteTxn,
+    onEditTxn,
+    editingPriceId,
+    setEditingPriceId,
+    priceDraft,
+    setPriceDraft,
+    onSavePrice
+  } = props;
+  const pos = stats.totalGainUSD >= 0;
+  const pct = stats.costBasisUSD > 0 ? stats.totalGainUSD / stats.costBasisUSD * 100 : 0;
+  const editing = editingPriceId === asset.id;
+  const sorted = [...transactions].sort((a, b) => b.date.localeCompare(a.date));
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pt-fade-in"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: onBack,
+    className: "flex items-center gap-1 pt-mono",
+    style: {
+      color: "var(--muted)",
+      fontSize: 12,
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement(ChevronLeft, {
+    size: 14
+  }), " Overview"), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-start justify-between mb-4"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", {
+    className: "pt-display",
+    style: {
+      fontSize: 26,
+      fontWeight: 600
+    }
+  }, asset.symbol), /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 12,
+      color: "var(--muted)"
+    }
+  }, asset.name)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 4
+    }
+  }, "current price"), editing ? /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-1 justify-end"
+  }, /*#__PURE__*/React.createElement("input", {
+    autoFocus: true,
+    className: "pt-input",
+    style: {
+      width: 90,
+      padding: "5px 8px"
+    },
+    value: priceDraft,
+    onChange: e => setPriceDraft(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter") {
+        const v = parseFloat(priceDraft);
+        if (!isNaN(v) && v >= 0) onSavePrice(asset.id, v);
+        setEditingPriceId(null);
+      }
+      if (e.key === "Escape") setEditingPriceId(null);
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      const v = parseFloat(priceDraft);
+      if (!isNaN(v) && v >= 0) onSavePrice(asset.id, v);
+      setEditingPriceId(null);
+    },
+    style: {
+      color: "var(--brass)"
+    }
+  }, /*#__PURE__*/React.createElement(Check, {
+    size: 16
+  }))) : /*#__PURE__*/React.createElement("button", {
+    className: "pt-mono flex items-center gap-1 justify-end",
+    style: {
+      fontSize: 18,
+      color: "var(--ink)",
+      fontWeight: 600
+    },
+    onClick: () => {
+      setEditingPriceId(asset.id);
+      setPriceDraft(String(asset.currentPrice));
+    }
+  }, fmt(asset.currentPrice, "USD"), asset.priceUnit && asset.priceUnit !== "unit" ? ` /${UNIT_LABELS[asset.priceUnit]}` : "", " ", /*#__PURE__*/React.createElement(Pencil, {
+    size: 12,
+    style: {
+      color: "var(--muted)"
+    }
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "grid grid-cols-4 gap-3 mb-6"
+  }, /*#__PURE__*/React.createElement(StatCard, {
+    label: "Quantity held",
+    value: fmtQty(stats.qty, stats.priceUnit)
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Total value",
+    value: fmt(stats.currentValueUSD, "USD"),
+    sub: fmt(stats.currentValueUSD * rate, "SGD")
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Invested (cost basis)",
+    value: fmt(stats.costBasisUSD, "USD"),
+    sub: fmt(stats.costBasisUSD * rate, "SGD")
+  }), /*#__PURE__*/React.createElement(StatCard, {
+    label: "Gain / loss",
+    value: fmt(Math.abs(stats.totalGainUSD), "USD"),
+    sub: `${fmtPct(pct)} · ${fmt(Math.abs(stats.totalGainUSD) * rate, "SGD")}`,
+    color: pos ? "var(--pos)" : "var(--neg)",
+    prefix: pos ? "+" : "−"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between mb-2"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label"
+  }, "transactions"), /*#__PURE__*/React.createElement("button", {
+    onClick: onAddTxn,
+    className: "pt-btn-brass flex items-center gap-1",
+    style: {
+      borderRadius: 6,
+      padding: "6px 12px",
+      fontSize: 12,
+      fontFamily: "Inter"
+    }
+  }, /*#__PURE__*/React.createElement(Plus, {
+    size: 14
+  }), " Add transaction")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: "1px solid var(--hairline)",
+      borderRadius: 10,
+      overflow: "hidden"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      display: "grid",
+      gridTemplateColumns: "0.9fr 0.9fr 0.9fr 1.1fr 1.1fr 1.1fr 0.8fr 26px 26px",
+      gap: 6,
+      padding: "10px 14px",
+      fontSize: 10,
+      color: "var(--muted)",
+      textTransform: "uppercase",
+      letterSpacing: "0.04em",
+      borderBottom: "1px solid var(--hairline)"
+    }
+  }, /*#__PURE__*/React.createElement("div", null, "Date"), /*#__PURE__*/React.createElement("div", null, "Type"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "Qty"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "Original (USD/SGD)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "Current (USD/SGD)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "—"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, "Change"), /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null)), sorted.length === 0 && /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      padding: "26px 14px",
+      color: "var(--muted)",
+      fontSize: 13,
+      textAlign: "center"
+    }
+  }, "No transactions yet for ", asset.symbol, "."), sorted.map(tx => {
+    const txUnit = tx.qtyUnit || "unit";
+    const origUSD = tx.price * tx.qty; // tx.price is $ per txUnit
+    const currentPriceInTxUnit = convertPricePerUnit(asset.currentPrice, asset.priceUnit || "unit", txUnit);
+    const curUSD = tx.qty * currentPriceInTxUnit;
+    const changePct = origUSD !== 0 ? (curUSD - origUSD) / origUSD * 100 : 0;
+    const pos2 = changePct >= 0;
+    return /*#__PURE__*/React.createElement(React.Fragment, {
+      key: tx.id
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "pt-row",
+      style: {
+        display: "grid",
+        gridTemplateColumns: "0.9fr 0.9fr 0.9fr 1.1fr 1.1fr 1.1fr 0.8fr 26px 26px",
+        gap: 6,
+        padding: "11px 14px",
+        alignItems: "center",
+        borderBottom: tx.notes ? "none" : "1px solid var(--hairline)"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        fontSize: 12.5
+      }
+    }, tx.date, tx.notes && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10.5,
+        color: "var(--muted)",
+        marginTop: 2,
+        whiteSpace: "pre-wrap",
+        lineHeight: 1.4
+      }
+    }, tx.notes)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+      className: "pt-mono",
+      style: {
+        fontSize: 11,
+        padding: "2px 7px",
+        borderRadius: 4,
+        background: tx.type === "buy" ? "rgba(91,163,126,0.15)" : "rgba(193,96,74,0.15)",
+        color: tx.type === "buy" ? "var(--pos)" : "var(--neg)"
+      }
+    }, tx.type === "buy" ? "BUY" : "SELL")), /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        textAlign: "right",
+        fontSize: 12.5
+      }
+    }, fmtQty(tx.qty, txUnit)), /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        textAlign: "right",
+        fontSize: 12,
+        lineHeight: 1.5
+      }
+    }, fmt(origUSD, "USD"), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, fmt(origUSD * rate, "SGD"))), /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        textAlign: "right",
+        fontSize: 12,
+        lineHeight: 1.5
+      }
+    }, fmt(curUSD, "USD"), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "var(--muted)"
+      }
+    }, fmt(curUSD * rate, "SGD"))), /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        textAlign: "right",
+        fontSize: 11.5,
+        color: "var(--muted)"
+      }
+    }, "@ ", fmt(tx.price, "USD")), /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        textAlign: "right",
+        fontSize: 13,
+        color: pos2 ? "var(--pos)" : "var(--neg)"
+      }
+    }, fmtPct(changePct)), /*#__PURE__*/React.createElement("button", {
+      onClick: () => onEditTxn(tx),
+      style: {
+        color: "var(--muted)"
+      },
+      title: "Edit transaction"
+    }, /*#__PURE__*/React.createElement(Pencil, {
+      size: 13
+    })), /*#__PURE__*/React.createElement("button", {
+      onClick: () => onDeleteTxn(tx.id),
+      style: {
+        color: "var(--muted)"
+      },
+      title: "Remove transaction"
+    }, /*#__PURE__*/React.createElement(Trash2, {
+      size: 13
+    }))), tx.notes && /*#__PURE__*/React.createElement("div", {
+      className: "pt-mono",
+      style: {
+        padding: "0 14px 10px 14px",
+        fontSize: 11.5,
+        color: "var(--muted)",
+        fontStyle: "italic",
+        borderBottom: "1px solid var(--hairline)"
+      }
+    }, "↳ ", tx.notes));
+  })));
+}
+function StatCard({
+  label,
+  value,
+  sub,
+  color,
+  prefix
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--panel)",
+      border: "1px solid var(--hairline)",
+      borderRadius: 10,
+      padding: "14px 16px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 6
+    }
+  }, label), /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 18,
+      fontWeight: 600,
+      color: color || "var(--ink)"
+    }
+  }, prefix, value), sub && /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 11.5,
+      color: "var(--muted)",
+      marginTop: 3
+    }
+  }, sub));
+}
+function ModalShell({
+  title,
+  onClose,
+  children
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pt-modal-backdrop",
+    style: {
+      position: "fixed",
+      inset: 0,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 50
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--panel)",
+      border: "1px solid var(--hairline)",
+      borderRadius: 12,
+      padding: 24,
+      width: 380,
+      fontFamily: "Inter"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between mb-4"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-display",
+    style: {
+      fontSize: 18,
+      fontWeight: 600,
+      color: "var(--ink)"
+    }
+  }, title), /*#__PURE__*/React.createElement("button", {
+    onClick: onClose,
+    style: {
+      color: "var(--muted)"
+    }
+  }, /*#__PURE__*/React.createElement(X, {
+    size: 16
+  }))), children));
+}
+function AddAssetModal({
+  onClose,
+  onSubmit
+}) {
+  const [symbol, setSymbol] = useState("");
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState("");
+  const [unitGroup, setUnitGroup] = useState("count");
+  const [priceUnit, setPriceUnit] = useState("unit");
+  const [priceSource, setPriceSource] = useState("manual");
+  const [priceTicker, setPriceTicker] = useState("");
+  const groupUnits = UNIT_GROUPS[unitGroup].units;
+  function changeGroup(g) {
+    setUnitGroup(g);
+    setPriceUnit(UNIT_GROUPS[g].units[0]);
+  }
+  const tickerHint = priceSource === "coingecko" ? "CoinGecko ID e.g. bitcoin, ethereum, solana" : priceSource === "goldapi" ? "Metal code: XAU (gold), XAG (silver), XPT (platinum), XPD (palladium)" : "";
+  const valid = symbol.trim() && name.trim() && price && !isNaN(parseFloat(price)) && parseFloat(price) >= 0 && (priceSource === "manual" || priceTicker.trim());
+  return /*#__PURE__*/React.createElement(ModalShell, {
+    title: "Add asset",
+    onClose: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-col gap-3"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Symbol"), /*#__PURE__*/React.createElement("input", {
+    className: "pt-input",
+    placeholder: "BTC",
+    value: symbol,
+    onChange: e => setSymbol(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Name"), /*#__PURE__*/React.createElement("input", {
+    className: "pt-input",
+    placeholder: "Bitcoin",
+    value: name,
+    onChange: e => setName(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Tracked in"), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2"
+  }, Object.entries(UNIT_GROUPS).map(([key]) => /*#__PURE__*/React.createElement("button", {
+    key: key,
+    onClick: () => changeGroup(key),
+    className: "pt-mono",
+    style: {
+      flex: 1,
+      padding: "8px 6px",
+      borderRadius: 7,
+      fontSize: 11.5,
+      fontWeight: 600,
+      background: unitGroup === key ? "rgba(201,162,75,0.15)" : "var(--panel-2)",
+      color: unitGroup === key ? "var(--brass)" : "var(--muted)",
+      border: `1px solid ${unitGroup === key ? "var(--brass-dim)" : "var(--hairline)"}`
+    }
+  }, key === "count" ? "Count" : "Weight")))), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Current price (USD)"), /*#__PURE__*/React.createElement("input", {
+    className: "pt-input",
+    placeholder: "0.00",
+    value: price,
+    onChange: e => setPrice(e.target.value)
+  })), unitGroup === "weight" && /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 110
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Per"), /*#__PURE__*/React.createElement("select", {
+    className: "pt-input",
+    value: priceUnit,
+    onChange: e => setPriceUnit(e.target.value)
+  }, groupUnits.map(u => /*#__PURE__*/React.createElement("option", {
+    key: u,
+    value: u
+  }, UNIT_LABELS[u]))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Auto-update price via"), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2"
+  }, [{
+    key: "manual",
+    label: "Manual"
+  }, {
+    key: "coingecko",
+    label: "CoinGecko"
+  }, {
+    key: "goldapi",
+    label: "GoldAPI.io"
+  }].map(s => /*#__PURE__*/React.createElement("button", {
+    key: s.key,
+    onClick: () => {
+      setPriceSource(s.key);
+      setPriceTicker("");
+    },
+    className: "pt-mono",
+    style: {
+      flex: 1,
+      padding: "7px 4px",
+      borderRadius: 7,
+      fontSize: 10.5,
+      fontWeight: 600,
+      background: priceSource === s.key ? "rgba(201,162,75,0.15)" : "var(--panel-2)",
+      color: priceSource === s.key ? "var(--brass)" : "var(--muted)",
+      border: `1px solid ${priceSource === s.key ? "var(--brass-dim)" : "var(--hairline)"}`
+    }
+  }, s.label)))), priceSource !== "manual" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Ticker / ID"), /*#__PURE__*/React.createElement("input", {
+    className: "pt-input",
+    placeholder: tickerHint,
+    value: priceTicker,
+    onChange: e => setPriceTicker(e.target.value)
+  })), /*#__PURE__*/React.createElement("button", {
+    disabled: !valid,
+    className: "pt-btn-brass",
+    style: {
+      borderRadius: 7,
+      padding: "10px 0",
+      fontSize: 13,
+      fontWeight: 600,
+      marginTop: 4,
+      opacity: valid ? 1 : 0.4
+    },
+    onClick: () => onSubmit({
+      symbol,
+      name,
+      price: parseFloat(price),
+      unitGroup,
+      priceUnit,
+      priceSource,
+      priceTicker: priceTicker.trim()
+    })
+  }, "Add asset")));
+}
+function AddTransactionModal({
+  asset,
+  onClose,
+  onSubmit,
+  initial
+}) {
+  const unitGroup = asset.unitGroup || "count";
+  const groupUnits = UNIT_GROUPS[unitGroup].units;
+  const isEdit = !!initial;
+  const [type, setType] = useState(initial ? initial.type : "buy");
+  const [amountMode, setAmountMode] = useState("perUnit"); // perUnit | total
+  const [qtyUnit, setQtyUnit] = useState(initial ? initial.qtyUnit || "unit" : asset.priceUnit || "unit");
+  const [amount, setAmount] = useState(initial ? String(initial.price) : ""); // either price-per-unit or total, depending on amountMode
+  const [qty, setQty] = useState(initial ? String(initial.qty) : "");
+  const [date, setDate] = useState(initial ? initial.date : todayStr());
+  const [notes, setNotes] = useState(initial ? initial.notes || "" : "");
+  const qtyNum = parseFloat(qty);
+  const amountNum = parseFloat(amount);
+  const validNums = !isNaN(qtyNum) && qtyNum > 0 && !isNaN(amountNum) && amountNum >= 0;
+
+  // price is always normalized to "$ per qtyUnit" for storage
+  const pricePerUnit = amountMode === "perUnit" ? amountNum : validNums ? amountNum / qtyNum : NaN;
+  const totalAmount = amountMode === "total" ? amountNum : validNums ? amountNum * qtyNum : NaN;
+  const valid = validNums && date;
+  return /*#__PURE__*/React.createElement(ModalShell, {
+    title: isEdit ? `Edit transaction · ${asset.symbol}` : `Add transaction · ${asset.symbol}`,
+    onClose: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-col gap-3"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2"
+  }, ["buy", "sell"].map(t => /*#__PURE__*/React.createElement("button", {
+    key: t,
+    onClick: () => setType(t),
+    className: "pt-mono",
+    style: {
+      flex: 1,
+      padding: "8px 0",
+      borderRadius: 7,
+      fontSize: 12,
+      fontWeight: 600,
+      textTransform: "uppercase",
+      background: type === t ? t === "buy" ? "rgba(91,163,126,0.18)" : "rgba(193,96,74,0.18)" : "var(--panel-2)",
+      color: type === t ? t === "buy" ? "var(--pos)" : "var(--neg)" : "var(--muted)",
+      border: `1px solid ${type === t ? t === "buy" ? "var(--pos)" : "var(--neg)" : "var(--hairline)"}`
+    }
+  }, t))), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Quantity"), /*#__PURE__*/React.createElement("input", {
+    className: "pt-input",
+    placeholder: "0.00",
+    value: qty,
+    onChange: e => setQty(e.target.value)
+  })), unitGroup === "weight" && /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 110
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Unit"), /*#__PURE__*/React.createElement("select", {
+    className: "pt-input",
+    value: qtyUnit,
+    onChange: e => setQtyUnit(e.target.value)
+  }, groupUnits.map(u => /*#__PURE__*/React.createElement("option", {
+    key: u,
+    value: u
+  }, UNIT_LABELS[u]))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between",
+    style: {
+      marginBottom: 5
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 0
+    }
+  }, "Enter as"), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-1"
+  }, [{
+    key: "perUnit",
+    label: `Price / ${UNIT_LABELS[qtyUnit]}`
+  }, {
+    key: "total",
+    label: "Total paid"
+  }].map(opt => /*#__PURE__*/React.createElement("button", {
+    key: opt.key,
+    onClick: () => setAmountMode(opt.key),
+    className: "pt-mono",
+    style: {
+      padding: "3px 8px",
+      borderRadius: 5,
+      fontSize: 10.5,
+      background: amountMode === opt.key ? "rgba(201,162,75,0.18)" : "var(--panel-2)",
+      color: amountMode === opt.key ? "var(--brass)" : "var(--muted)",
+      border: `1px solid ${amountMode === opt.key ? "var(--brass-dim)" : "var(--hairline)"}`
+    }
+  }, opt.label)))), /*#__PURE__*/React.createElement("input", {
+    className: "pt-input",
+    placeholder: "0.00 USD",
+    value: amount,
+    onChange: e => setAmount(e.target.value)
+  }), validNums && /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 11,
+      color: "var(--muted)",
+      marginTop: 5
+    }
+  }, amountMode === "perUnit" ? `Total: ${fmt(totalAmount, "USD")}` : `≈ ${fmt(pricePerUnit, "USD")} per ${UNIT_LABELS[qtyUnit]}`)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Date"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    className: "pt-input",
+    value: date,
+    onChange: e => setDate(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Notes ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      opacity: 0.5,
+      textTransform: "none",
+      letterSpacing: 0
+    }
+  }, "(optional)")), /*#__PURE__*/React.createElement("textarea", {
+    className: "pt-input",
+    rows: 2,
+    placeholder: "Broker, reason, memo…",
+    value: notes,
+    onChange: e => setNotes(e.target.value),
+    style: {
+      resize: "vertical",
+      lineHeight: 1.5
+    }
+  })), /*#__PURE__*/React.createElement("button", {
+    disabled: !valid,
+    className: "pt-btn-brass",
+    style: {
+      borderRadius: 7,
+      padding: "10px 0",
+      fontSize: 13,
+      fontWeight: 600,
+      marginTop: 6,
+      opacity: valid ? 1 : 0.4
+    },
+    onClick: () => onSubmit({
+      type,
+      price: pricePerUnit,
+      qty: qtyNum,
+      qtyUnit,
+      date,
+      notes: notes.trim()
+    })
+  }, isEdit ? "Save changes" : "Add transaction")));
+}
+
+// ---------------------------------------------------------------------------
+// EditAssetModal — lets user fix symbol, name, unit group, price unit
+// ---------------------------------------------------------------------------
+function EditAssetModal({
+  asset,
+  onClose,
+  onSubmit
+}) {
+  const [symbol, setSymbol] = useState(asset.symbol);
+  const [name, setName] = useState(asset.name);
+  const [unitGroup, setUnitGroup] = useState(asset.unitGroup || "count");
+  const [priceUnit, setPriceUnit] = useState(asset.priceUnit || "unit");
+  const [priceSource, setPriceSource] = useState(asset.priceSource || "manual");
+  const [priceTicker, setPriceTicker] = useState(asset.priceTicker || "");
+  const groupUnits = UNIT_GROUPS[unitGroup].units;
+  function changeGroup(g) {
+    setUnitGroup(g);
+    setPriceUnit(UNIT_GROUPS[g].units[0]);
+  }
+  const tickerHint = priceSource === "coingecko" ? "e.g. bitcoin, ethereum, solana" : priceSource === "goldapi" ? "e.g. AAPL, GLD, SGXZ34.SI" : "";
+  const valid = symbol.trim() && name.trim() && (priceSource === "manual" || priceTicker.trim());
+  return /*#__PURE__*/React.createElement(ModalShell, {
+    title: "Edit asset",
+    onClose: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-col gap-3"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Symbol"), /*#__PURE__*/React.createElement("input", {
+    className: "pt-input",
+    value: symbol,
+    onChange: e => setSymbol(e.target.value.toUpperCase())
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Name"), /*#__PURE__*/React.createElement("input", {
+    className: "pt-input",
+    value: name,
+    onChange: e => setName(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Tracked in"), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2"
+  }, Object.keys(UNIT_GROUPS).map(key => /*#__PURE__*/React.createElement("button", {
+    key: key,
+    onClick: () => changeGroup(key),
+    className: "pt-mono",
+    style: {
+      flex: 1,
+      padding: "8px 6px",
+      borderRadius: 7,
+      fontSize: 11.5,
+      fontWeight: 600,
+      background: unitGroup === key ? "rgba(201,162,75,0.15)" : "var(--panel-2)",
+      color: unitGroup === key ? "var(--brass)" : "var(--muted)",
+      border: `1px solid ${unitGroup === key ? "var(--brass-dim)" : "var(--hairline)"}`
+    }
+  }, key === "count" ? "Count" : "Weight")))), unitGroup === "weight" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Price quoted per"), /*#__PURE__*/React.createElement("select", {
+    className: "pt-input",
+    value: priceUnit,
+    onChange: e => setPriceUnit(e.target.value)
+  }, groupUnits.map(u => /*#__PURE__*/React.createElement("option", {
+    key: u,
+    value: u
+  }, UNIT_LABELS[u])))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Auto-update price via"), /*#__PURE__*/React.createElement("div", {
+    className: "flex gap-2"
+  }, [{
+    key: "manual",
+    label: "Manual"
+  }, {
+    key: "coingecko",
+    label: "CoinGecko"
+  }, {
+    key: "goldapi",
+    label: "GoldAPI.io"
+  }].map(s => /*#__PURE__*/React.createElement("button", {
+    key: s.key,
+    onClick: () => setPriceSource(s.key),
+    className: "pt-mono",
+    style: {
+      flex: 1,
+      padding: "7px 4px",
+      borderRadius: 7,
+      fontSize: 10.5,
+      fontWeight: 600,
+      background: priceSource === s.key ? "rgba(201,162,75,0.15)" : "var(--panel-2)",
+      color: priceSource === s.key ? "var(--brass)" : "var(--muted)",
+      border: `1px solid ${priceSource === s.key ? "var(--brass-dim)" : "var(--hairline)"}`
+    }
+  }, s.label)))), priceSource !== "manual" && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 5
+    }
+  }, "Ticker / ID"), /*#__PURE__*/React.createElement("input", {
+    className: "pt-input",
+    placeholder: tickerHint,
+    value: priceTicker,
+    onChange: e => setPriceTicker(e.target.value)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 11,
+      color: "var(--muted)",
+      padding: "8px 10px",
+      background: "var(--panel-2)",
+      borderRadius: 6,
+      lineHeight: 1.6
+    }
+  }, "Changing the unit affects future transactions only. Existing transactions keep their original units."), /*#__PURE__*/React.createElement("button", {
+    disabled: !valid,
+    className: "pt-btn-brass",
+    style: {
+      borderRadius: 7,
+      padding: "10px 0",
+      fontSize: 13,
+      fontWeight: 600,
+      marginTop: 4,
+      opacity: valid ? 1 : 0.4
+    },
+    onClick: () => onSubmit({
+      symbol: symbol.trim(),
+      name: name.trim(),
+      unitGroup,
+      priceUnit,
+      priceSource,
+      priceTicker: priceTicker.trim()
+    })
+  }, "Save changes")));
+}
+
+// ---------------------------------------------------------------------------
+// AnalysisView — AI-powered trade analysis with optional chart image upload
+// ---------------------------------------------------------------------------
+function AnalysisView({
+  assets,
+  transactions,
+  statsByAsset,
+  rate,
+  onBack
+}) {
+  const [selectedAssetId, setSelectedAssetId] = useState(assets[0]?.id || "");
+  const [chartImage, setChartImage] = useState(null); // { base64, mediaType, preview }
+  const [analysis, setAnalysis] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const chartInputRef = useRef(null);
+  const asset = assets.find(a => a.id === selectedAssetId) || null;
+  const assetTxns = transactions.filter(t => t.assetId === selectedAssetId).sort((a, b) => a.date.localeCompare(b.date));
+  const stats = asset ? statsByAsset[asset.id] : null;
+  function handleChartUpload(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(",")[1];
+      const mediaType = file.type || "image/png";
+      const preview = reader.result;
+      setChartImage({
+        base64,
+        mediaType,
+        preview
+      });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }
+  async function runAnalysis() {
+    if (!asset || assetTxns.length === 0) return;
+    setLoading(true);
+    setError(null);
+    setAnalysis(null);
+    const txnSummary = assetTxns.map(tx => {
+      const unit = tx.qtyUnit || asset.priceUnit || "unit";
+      const total = tx.price * tx.qty;
+      return `- ${tx.date}: ${tx.type.toUpperCase()} ${tx.qty} ${unit} @ $${tx.price.toFixed(4)}/unit (total: $${total.toFixed(2)})${tx.notes ? ` — Note: "${tx.notes}"` : ""}`;
+    }).join("\n");
+    const avgBuy = stats && stats.qty > 0 ? stats.costBasisUSD / stats.qty : null;
+    const gainPct = stats && stats.costBasisUSD > 0 ? stats.totalGainUSD / stats.costBasisUSD * 100 : 0;
+    const systemPrompt = `You are an experienced investment analyst helping a retail investor review their trading decisions. Be honest, constructive and specific. Use plain language. Structure your response using these exact markdown sections:
+
+## Overall Assessment
+A 2-3 sentence summary of the trading pattern.
+
+## Decision-by-Decision Breakdown
+Go through each transaction chronologically and comment on the timing, sizing, and rationale (if notes were provided).
+
+## What Went Well
+Bullet points of positive patterns or smart decisions.
+
+## Areas to Improve
+Bullet points of weaknesses, emotional patterns, or timing issues observed.
+
+## Key Takeaways
+2-3 actionable lessons the investor can apply going forward.
+
+${chartImage ? "A price chart has been provided. Use it to assess whether buys/sells were well-timed relative to price action." : "No price chart was provided, so base analysis purely on the transaction data patterns."}`;
+    const userContent = [{
+      type: "text",
+      text: `Please analyse my trading decisions for ${asset.name} (${asset.symbol}).\n\nTransaction history:\n${txnSummary}\n\nCurrent position: ${stats ? fmtQty(stats.qty, stats.priceUnit) : "—"} units held\nAverage buy price: ${avgBuy !== null ? fmt(avgBuy, "USD") : "—"}\nUnrealized P&L: ${stats ? fmt(stats.unrealizedUSD, "USD") : "—"} (${fmtPct(gainPct)})\nTotal gain/loss incl. realized: ${stats ? fmt(stats.totalGainUSD, "USD") : "—"}`
+    }];
+    if (chartImage) {
+      userContent.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: chartImage.mediaType,
+          data: chartImage.base64
+        }
+      });
+      userContent.push({
+        type: "text",
+        text: "The image above is a price chart for this asset. Please factor the price action into your analysis of whether my entries and exits were well-timed."
+      });
+    }
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          system: systemPrompt,
+          messages: [{
+            role: "user",
+            content: userContent
+          }]
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      const text = data.content?.filter(b => b.type === "text").map(b => b.text).join("\n") || "";
+      setAnalysis(text);
+    } catch (err) {
+      setError(err.message || "Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Simple markdown renderer for the structured response
+  function renderAnalysis(text) {
+    const lines = text.split("\n");
+    const elements = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (line.startsWith("## ")) {
+        elements.push(/*#__PURE__*/React.createElement("div", {
+          key: i,
+          style: {
+            fontFamily: "Fraunces, serif",
+            fontSize: 16,
+            fontWeight: 600,
+            color: "var(--brass)",
+            marginTop: 22,
+            marginBottom: 8
+          }
+        }, line.slice(3)));
+      } else if (line.startsWith("- ") || line.startsWith("• ")) {
+        elements.push(/*#__PURE__*/React.createElement("div", {
+          key: i,
+          className: "flex gap-2",
+          style: {
+            marginBottom: 6
+          }
+        }, /*#__PURE__*/React.createElement("span", {
+          style: {
+            color: "var(--brass)",
+            flexShrink: 0,
+            marginTop: 1
+          }
+        }, "·"), /*#__PURE__*/React.createElement("span", {
+          style: {
+            fontSize: 13.5,
+            lineHeight: 1.6,
+            color: "var(--ink)"
+          }
+        }, line.slice(2))));
+      } else if (line.trim()) {
+        elements.push(/*#__PURE__*/React.createElement("p", {
+          key: i,
+          style: {
+            fontSize: 13.5,
+            lineHeight: 1.7,
+            color: "var(--ink)",
+            marginBottom: 6,
+            marginTop: 0
+          }
+        }, line));
+      }
+      i++;
+    }
+    return elements;
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "pt-fade-in"
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: onBack,
+    className: "flex items-center gap-1 pt-mono",
+    style: {
+      color: "var(--muted)",
+      fontSize: 12,
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement(ChevronLeft, {
+    size: 14
+  }), " Overview"), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-baseline justify-between mb-4"
+  }, /*#__PURE__*/React.createElement("h1", {
+    className: "pt-display",
+    style: {
+      fontSize: 26,
+      fontWeight: 600
+    }
+  }, "Trade Analysis"), /*#__PURE__*/React.createElement("div", {
+    className: "pt-label"
+  }, "powered by Claude AI")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--panel)",
+      border: "1px solid var(--hairline)",
+      borderRadius: 12,
+      padding: 20,
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-wrap gap-4 items-end"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: "1 1 200px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 6
+    }
+  }, "Asset to analyse"), /*#__PURE__*/React.createElement("select", {
+    className: "pt-input",
+    value: selectedAssetId,
+    onChange: e => {
+      setSelectedAssetId(e.target.value);
+      setAnalysis(null);
+      setChartImage(null);
+    }
+  }, assets.map(a => /*#__PURE__*/React.createElement("option", {
+    key: a.id,
+    value: a.id
+  }, a.symbol, " — ", a.name)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: "1 1 220px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 6
+    }
+  }, "Price chart ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      opacity: 0.55,
+      textTransform: "none",
+      letterSpacing: 0
+    }
+  }, "(optional but recommended)")), /*#__PURE__*/React.createElement("input", {
+    ref: chartInputRef,
+    type: "file",
+    accept: "image/*",
+    style: {
+      display: "none"
+    },
+    onChange: handleChartUpload
+  }), chartImage ? /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2"
+  }, /*#__PURE__*/React.createElement("img", {
+    src: chartImage.preview,
+    alt: "chart",
+    style: {
+      height: 40,
+      borderRadius: 6,
+      border: "1px solid var(--hairline)",
+      objectFit: "cover",
+      maxWidth: 120
+    }
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 11,
+      color: "var(--pos)"
+    }
+  }, "Chart uploaded ✓"), /*#__PURE__*/React.createElement("button", {
+    className: "pt-mono",
+    style: {
+      fontSize: 11,
+      color: "var(--muted)"
+    },
+    onClick: () => setChartImage(null)
+  }, "Remove"))) : /*#__PURE__*/React.createElement("button", {
+    onClick: () => chartInputRef.current?.click(),
+    style: {
+      border: "1px dashed var(--hairline)",
+      borderRadius: 6,
+      padding: "8px 16px",
+      fontSize: 12,
+      color: "var(--muted)",
+      fontFamily: "IBM Plex Mono",
+      width: "100%",
+      textAlign: "left"
+    }
+  }, "+ Upload chart image (PNG, JPG…)")), /*#__PURE__*/React.createElement("button", {
+    onClick: runAnalysis,
+    disabled: !asset || assetTxns.length === 0 || loading,
+    className: "pt-btn-brass",
+    style: {
+      borderRadius: 8,
+      padding: "10px 20px",
+      fontSize: 13,
+      fontWeight: 600,
+      opacity: !asset || assetTxns.length === 0 || loading ? 0.45 : 1,
+      whiteSpace: "nowrap"
+    }
+  }, loading ? "Analysing…" : "Run analysis")), asset && /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      marginTop: 14,
+      fontSize: 11.5,
+      color: "var(--muted)"
+    }
+  }, assetTxns.length, " transaction", assetTxns.length !== 1 ? "s" : "", " found for ", asset.symbol, ".", assetTxns.length === 0 && " Add transactions first to enable analysis.", chartImage && " A price chart will be included for context.", !chartImage && assetTxns.length > 0 && " Upload a price chart to get timing feedback on your entries and exits.")), chartImage && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--panel)",
+      border: "1px solid var(--hairline)",
+      borderRadius: 10,
+      padding: 14,
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label",
+    style: {
+      marginBottom: 8
+    }
+  }, "uploaded chart"), /*#__PURE__*/React.createElement("img", {
+    src: chartImage.preview,
+    alt: "Price chart",
+    style: {
+      width: "100%",
+      borderRadius: 6,
+      maxHeight: 260,
+      objectFit: "contain",
+      background: "#0b0d11"
+    }
+  })), error && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "rgba(193,96,74,0.1)",
+      border: "1px solid rgba(193,96,74,0.3)",
+      borderRadius: 10,
+      padding: "14px 18px",
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      fontSize: 12,
+      color: "var(--neg)"
+    }
+  }, "Error: ", error)), loading && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--panel)",
+      border: "1px solid var(--hairline)",
+      borderRadius: 10,
+      padding: "32px 24px",
+      textAlign: "center"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-mono",
+    style: {
+      color: "var(--muted)",
+      fontSize: 13
+    }
+  }, "Reviewing your transactions", chartImage ? " and price chart" : "", "…"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "center",
+      gap: 6,
+      marginTop: 14
+    }
+  }, [0, 1, 2].map(i => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      width: 6,
+      height: 6,
+      borderRadius: "50%",
+      background: "var(--brass)",
+      animation: `ptPulse 1.2s ease-in-out ${i * 0.2}s infinite`
+    }
+  })))), analysis && !loading && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "var(--panel)",
+      border: "1px solid var(--hairline)",
+      borderRadius: 12,
+      padding: "22px 24px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between mb-2"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "pt-label"
+  }, "analysis · ", asset?.symbol), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setAnalysis(null),
+    style: {
+      color: "var(--muted)"
+    }
+  }, /*#__PURE__*/React.createElement(X, {
+    size: 14
+  }))), /*#__PURE__*/React.createElement("div", null, renderAnalysis(analysis))), /*#__PURE__*/React.createElement("style", null, `
+        @keyframes ptPulse {
+          0%, 100% { opacity: 0.25; transform: scale(0.9); }
+          50% { opacity: 1; transform: scale(1.1); }
+        }
+      `));
+}
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(/*#__PURE__*/React.createElement(PortfolioTracker, null));
+</script>
+</body>
+</html>
